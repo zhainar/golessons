@@ -6,4 +6,8 @@ build:
 test:
         go test -v -race -timeout 30s ./..
 
+.PHONY: migrate_test
+migrate_test:
+        migrate -path migrations -database "postgres://postgres:guest@localhost/restapi_test?sslmode=disable" up
+
 .DEFAULT_GOAL := build
