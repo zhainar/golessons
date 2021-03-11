@@ -7,10 +7,10 @@ import (
 )
 
 type User struct {
-	ID                int
-	Email             string
-	Password          string
-	EncryptedPassword string
+	ID                int    `json:"id"`
+	Email             string `json:"email"`
+	Password          string `json:"password,omitempty"`
+	EncryptedPassword string `json:"-"`
 }
 
 func (u *User) BeforeCreate() error {
@@ -40,4 +40,8 @@ func (u *User) Validate() error {
 		validation.Field(&u.Email, validation.Required, is.Email),
 		validation.Field(&u.Password, validation.By(requireIf(u.EncryptedPassword == "")), validation.Length(6, 100)),
 	)
+}
+
+func (u *User) Sanitize() {
+	u.Password = ""
 }
