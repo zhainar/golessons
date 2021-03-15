@@ -5,4 +5,5 @@ import "github.com/zhainar/awesomeProject/internal/app/model"
 type UserRepository interface {
 	Create(u *model.User) error
 	FindByEmail(email string) (*model.User, error)
+	Find(int) (*model.User, error)
 }
