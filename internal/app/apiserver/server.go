@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/gorilla/mux"
@@ -12,11 +13,13 @@ import (
 )
 
 const (
-	sessionName = "sessions_data"
+	sessionName        = "sessions_data"
+	ctxUserKey  ctxKey = iota
 )
 
 var (
 	errIncorrectEmailOrPassword = errors.New("incorrect email or password")
+	errNotAuthenticated         = errors.New("not authenticated")
 )
 
 type server struct {
@@ -25,6 +28,8 @@ type server struct {
 	store         store.Store
 	sessionsStore sessions.Store
 }
+
+type ctxKey uint8
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
@@ -57,6 +62,10 @@ func (s *server) respond(w http.ResponseWriter, r *http.Request, code int, data 
 func (s *server) configureRouter() {
 	s.router.HandleFunc("/users", s.handleUsersCreate()).Methods(http.MethodPost)
 	s.router.HandleFunc("/sessions", s.handleSessionsCreate()).Methods(http.MethodPost)
+
+	private := s.router.PathPrefix("/private").Subrouter()
+	private.Use(s.authenticateUser)
+	private.HandleFunc("/whoami", s.handlerWhoAmI()).Methods(http.MethodGet)
 }
 
 func (s *server) handleUsersCreate() http.HandlerFunc {
@@ -85,6 +94,12 @@ func (s *server) handleUsersCreate() http.HandlerFunc {
 
 		u.Sanitize()
 		s.respond(w, r, http.StatusCreated, u)
+	}
+}
+
+func (s *server) handlerWhoAmI() http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		s.respond(writer, request, http.StatusOK, request.Context().Value(ctxUserKey).(*model.User))
 	}
 }
 
@@ -126,4 +141,33 @@ func (s *server) handleSessionsCreate() http.HandlerFunc {
 
 		s.respond(w, r, http.StatusOK, nil)
 	}
+}
+
+func (s *server) authenticateUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		session, err := s.sessionsStore.Get(request, sessionName)
+
+		if err != nil {
+			s.error(writer, request, http.StatusInternalServerError, err)
+			return
+		}
+
+		id, ok := session.Values["user_id"]
+
+		if !ok {
+			s.error(writer, request, http.StatusUnauthorized, errNotAuthenticated)
+			return
+		}
+
+		u, err := s.store.User().Find(id.(int))
+
+		if err != nil {
+			s.error(writer, request, http.StatusUnauthorized, errNotAuthenticated)
+			return
+		}
+
+		newContext := context.WithValue(request.Context(), ctxUserKey, u)
+
+		next.ServeHTTP(writer, request.WithContext(newContext))
+	})
 }
