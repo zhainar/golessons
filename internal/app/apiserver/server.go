@@ -4,17 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/sirupsen/logrus"
 	"github.com/zhainar/awesomeProject/internal/app/model"
 	"github.com/zhainar/awesomeProject/internal/app/store"
 	"net/http"
+	"time"
 )
 
 const (
 	sessionName        = "sessions_data"
 	ctxUserKey  ctxKey = iota
+	ctxRequestID
 )
 
 var (
@@ -60,6 +64,9 @@ func (s *server) respond(w http.ResponseWriter, r *http.Request, code int, data 
 }
 
 func (s *server) configureRouter() {
+	s.router.Use(s.setRequestID)
+	s.router.Use(s.logRequest)
+	s.router.Use(handlers.CORS(handlers.AllowedOrigins([]string{"*"})))
 	s.router.HandleFunc("/users", s.handleUsersCreate()).Methods(http.MethodPost)
 	s.router.HandleFunc("/sessions", s.handleSessionsCreate()).Methods(http.MethodPost)
 
@@ -169,5 +176,39 @@ func (s *server) authenticateUser(next http.Handler) http.Handler {
 		newContext := context.WithValue(request.Context(), ctxUserKey, u)
 
 		next.ServeHTTP(writer, request.WithContext(newContext))
+	})
+}
+
+func (s *server) setRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		id := uuid.New().String()
+		writer.Header().Set("X-Request-ID", id)
+
+		newContext := context.WithValue(request.Context(), ctxRequestID, id)
+
+		next.ServeHTTP(writer, request.WithContext(newContext))
+	})
+}
+
+func (s *server) logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		logger := s.logger.WithFields(logrus.Fields{
+			"remote_addr": request.RemoteAddr,
+			"request_id":  request.Context().Value(ctxRequestID),
+		})
+
+		logger.Infof("started %s %s", request.Method, request.RequestURI)
+
+		start := time.Now()
+		rw := &responseWriter{writer, http.StatusOK}
+
+		next.ServeHTTP(rw, request)
+
+		logger.Infof(
+			"completed with %d %s in %v",
+			rw.code,
+			http.StatusText(rw.code),
+			time.Now().Sub(start),
+		)
 	})
 }
